@@ -96,11 +96,13 @@ extern "C"
 
 ### Include ordering
 
-Group includes and separate groups with a blank line, in this order:
+Group includes in this order:
 1. The matching header (in a `.c` file, e.g. `shapes.c` includes `"shapes.h"` first - this proves the header is self-contained).
 2. C standard library headers (`<...>`), alphabetized.
 3. Other system / third-party headers (`<...>`).
 4. Project headers (`"..."`), alphabetized.
+
+A blank line separates the groups:
 
 ```c
 #include "shapes.h"
@@ -112,6 +114,35 @@ Group includes and separate groups with a blank line, in this order:
 #include "geometry/point.h"
 #include "util/log.h"
 ```
+
+**Consecutive groups of one include each are written as one block.** The blank
+line is a separator, and between two lone includes there is nothing to separate.
+Small modules are the common case in an embedded project, and the rule taken
+literally gives them a blank line between every single line:
+
+```c
+/* Not this. */
+#include "seq.h"
+
+#include <stddef.h>
+
+#include "main.h"
+
+/* This. */
+#include "seq.h"
+#include <stddef.h>
+#include "main.h"
+```
+
+The order is identical either way, and the order is what carries the meaning: a
+reader who wants to know whether `main.h` is a project header reads the quotes,
+not the whitespace. The blank lines exist only to help the eye over a long list,
+so where there is no long list they are noise. Keep them as soon as any one of
+the adjacent groups has two or more includes.
+
+Set `SortIncludes: false` in `.clang-format`. The grouping is a judgement about
+what belongs together, and a sorter that does not know the rule above will
+flatten or re-split it.
 
 ### Quoted includes search their own folder first
 
@@ -278,6 +309,28 @@ typedef struct
     size_t capacity; /**< Allocated slots.                    */
 } int_list_t;
 ```
+
+**The asterisk belongs to the name, so it goes in the name column**, not in the
+space before it. `*items` starts where `count` and `capacity` start. Getting this
+backwards lines the letters up and leaves the asterisk sitting in nobody's
+column, which is the version that looks wrong without it being obvious why:
+
+```c
+/* Not this: the identifiers align, the asterisk hangs one column back. */
+    seq_state_fn_t next_fn;
+    void          *user;
+    uint32_t       time;
+
+/* This: every declarator starts in the same column, asterisk included. */
+    seq_state_fn_t next_fn;
+    void           *user;
+    uint32_t       time;
+```
+
+The same goes for a block of local declarations. Note that clang-format's
+`PointerAlignment: Right` does the first of those, so it will undo this. See
+[Code formatting](#code-formatting-clang-format) for the full list of what the
+tool cannot keep.
 
 Align **consecutive variable declarations and assignments** that form a block, on the `=`:
 
