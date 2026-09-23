@@ -21,6 +21,7 @@ This skill produces C source that is consistent, readable, and easy to maintain.
 - **Structs & enums:** members/values column-aligned, a trailing comma on the last enum value, and a blank line before the closing brace.
 - **Returns:** guard-clause early returns by default; a single return at the end when it removes duplication or pairs with `goto cleanup` - never dogmatic.
 - **Headers:** include guard + an `extern "C"` C++ linkage guard around the declarations.
+- **Library configuration:** a library checks its user's `lib_config.h` in its own header, right after including it, under a `Configuration checks` banner. Never in the configuration file, which the user owns and no update ever replaces. See [Checking a library's configuration](#checking-a-librarys-configuration).
 - **Files:** a header block with `@file`/`@brief` (optionally `@version`) and a copyright/license notice referencing `LICENSE.md` in the project root. For a new project, ask the user for the copyright holder and license before writing.
 - **Formatting:** a ready-to-use `.clang-format` ships with this skill - copy it to the project root to auto-apply the mechanical rules.
 - **Standard:** target C11 unless the user says otherwise. Use `<stdbool.h>`, `<stdint.h>`, `size_t`, and other standard facilities.
@@ -34,9 +35,9 @@ Every `.c` and `.h` file is divided into sections that always appear in the same
 
 ```c
 /*
- * ***********************************************************************************************************
+ * ****************************************************************************************************
  * Section name
- * ***********************************************************************************************************
+ * ****************************************************************************************************
 */
 ```
 
@@ -59,12 +60,13 @@ Every section listed gets the boxed section banner, **including both implementat
 1. File header comment
 2. Include guard open
 3. Includes (only what the header itself needs)
-4. C++ linkage guard open (`extern "C"`)
-5. Macros
-6. Types
-7. Public function prototypes
-8. C++ linkage guard close
-9. Include guard close
+4. Configuration checks (only in a library header that includes a user configuration file)
+5. C++ linkage guard open (`extern "C"`)
+6. Macros
+7. Types
+8. Public function prototypes
+9. C++ linkage guard close
+10. Include guard close
 
 ### Include guards
 
@@ -166,6 +168,76 @@ Two ways out, and the first is usually better:
 - **Give the shipped file a different name** from the one the header includes,
   and have the installer or the user rename their copy. The cost is a second
   name for one idea, which readers have to learn.
+
+### Checking a library's configuration
+
+A library that ships a configuration header checks it in its own public header,
+directly after including it, under its own banner:
+
+```c
+#include "lib_config.h"
+
+/*
+ * ****************************************************************************************************
+ * Configuration checks
+ * ****************************************************************************************************
+*/
+
+/* Required from the first release: missing is an error that names the option. */
+#ifndef LIB_MAX_ITEMS
+#error "LIB_MAX_ITEMS is not defined. Add it to lib_config.h"
+#elif LIB_MAX_ITEMS < 2U
+#error "LIB_MAX_ITEMS must be at least 2"
+#endif
+
+/* Added in a later release: defaulted, because a configuration file installed
+   before it existed will never define it. */
+#ifndef LIB_TIMEOUT_MS
+#define LIB_TIMEOUT_MS      100U
+#elif LIB_TIMEOUT_MS == 0U
+#error "LIB_TIMEOUT_MS must be greater than 0"
+#endif
+```
+
+**Never in the configuration file itself**, not even at the bottom of it. That
+file belongs to the user. It is copied once and never replaced, and the user
+edits it, trims it, copies it from an old project, or merges several libraries'
+settings into one. Anything in it is frozen at install time: a check added in a
+later release never reaches anyone who installed earlier, and a check that gets
+edited away is simply gone. Then the failure it guarded against happens without
+a word. In the sequencer, `SEQ_MAX_TASKS 1U` compiles cleanly and makes every
+`seq_task_add()` return `SEQ_ERR_FULL`, usually from an interrupt where nobody
+reads the result. The user's file holds the user's choices. What the library
+requires of them lives in files the library owns, which every update replaces.
+
+**Not in the `.c` either**, even when only the `.c` uses the value. A default
+has to be visible to every file that includes the header the moment an option
+sizes a member of a public struct, and one fixed place in every library is
+easier to find than a rule about which place applies. This is also how FreeRTOS
+does it: `FreeRTOS.h` includes the user's `FreeRTOSConfig.h`, then fills in
+defaults and stops the build on anything missing, so it is where an STM32
+developer already expects to look.
+
+**Existence first, then range, chained with `#elif`.** An undefined name inside
+`#if` quietly counts as `0`, so a lone range check reports a missing option as a
+value that is too small, which sends the reader looking for the wrong mistake.
+Checking existence first fixes the message, and chaining the range check with
+`#elif` means it only ever sees a defined value. Written as two separate blocks
+instead, `#error` does not stop the preprocessor, so a missing option produces
+both errors and a `-Wundef` warning for one mistake. The chain is also what
+MISRA C:2012 `Rule 20.9` requires: every identifier in an `#if` is defined
+before it is evaluated.
+
+**Required or defaulted.** An option that exists from the first release and has
+no sensible default, a buffer size or a pin, is required. Prefer that where a
+default would also work, because a default swallows a typo: `LIB_MAX_ITEM 32U`
+leaves the size at its default without a word. An option added in any later
+release must be defaulted, or the update breaks every existing build. Add it to
+the shipped configuration file too, so new installs see it and can change it.
+
+The configuration file still says each option's valid range beside its
+`#define`, for the person editing it. That comment is the documentation; the
+check in the header is what enforces it.
 
 ## Naming
 
