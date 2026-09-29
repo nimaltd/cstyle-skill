@@ -169,6 +169,21 @@ Two ways out, and the first is usually better:
   and have the installer or the user rename their copy. The cost is a second
   name for one idea, which readers have to learn.
 
+When the tests have to cover more than one setting, such as each RTOS a library
+supports, sharing one file is not enough and renaming is not wanted. Then a test
+build can switch the shipped file off without touching it: define its include
+guard on the command line, which makes the include expand to nothing, and give
+the options with `-D` instead. ee24 builds its suite four times this way:
+
+```cmake
+target_compile_definitions(test_ee24_${name} PRIVATE
+    EE24_CONFIG_H                   # the guard of ee24_config.h, so it is skipped
+    EE24_RTOS=EE24_RTOS_${rtos})
+```
+
+Keep one build that uses the shipped file as it is, so the setting users get
+first is still the one tested.
+
 ### Checking a library's configuration
 
 A library that ships a configuration header checks it in its own public header,
@@ -234,6 +249,29 @@ default would also work, because a default swallows a typo: `LIB_MAX_ITEM 32U`
 leaves the size at its default without a word. An option added in any later
 release must be defaulted, or the update breaks every existing build. Add it to
 the shipped configuration file too, so new installs see it and can change it.
+
+**Named choices start at 1, never 0.** An option picked from a list of names,
+`#define LIB_RTOS LIB_RTOS_THREADX`, is checked against those names. A misspelt
+one, `LIB_RTOS_FREERTOS` when no such name exists, also counts as `0` inside
+`#if`. If `0` is a valid choice, usually "none", the typo quietly selects it and
+the build succeeds with the wrong setting. Numbered from 1, the typo matches
+nothing and the "must be one of" check refuses it:
+
+```c
+#define LIB_RTOS_NONE       1
+#define LIB_RTOS_CMSIS_V2   2
+#define LIB_RTOS_THREADX    3
+
+#ifndef LIB_RTOS
+#error "LIB_RTOS is not defined. Add it to lib_config.h"
+#elif (LIB_RTOS != LIB_RTOS_NONE) && (LIB_RTOS != LIB_RTOS_CMSIS_V2) && \
+      (LIB_RTOS != LIB_RTOS_THREADX)
+#error "LIB_RTOS must be one of the LIB_RTOS_ values listed in lib_config.h"
+#endif
+```
+
+The names are defined in the header, before the check. The configuration file
+only stores the token, which is not expanded until the check reads it.
 
 The configuration file still says each option's valid range beside its
 `#define`, for the person editing it. That comment is the documentation; the
