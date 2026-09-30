@@ -68,6 +68,31 @@ Every section listed gets the boxed section banner, **including both implementat
 9. C++ linkage guard close
 10. Include guard close
 
+### A header-only library
+
+When the whole library is one header of `static inline` functions, the header
+is its own `.c` as well, and takes both orders in one file: the header's items
+1 to 7, then
+
+1. Public function prototypes, each with its separator and one-line `@brief`,
+   since this list is still the interface a reader scans
+2. Private function prototypes, a plain list as in a `.c`
+3. Public function implementations, with the full contract
+4. Private function implementations
+5. C++ linkage guard close, include guard close
+
+Three things change once every function body lives in a header:
+
+- **Every body is compiled in every file that includes it**, used or not. So
+  anything an optional setting of an included vendor header can remove, such as
+  a FreeRTOS call behind a `FreeRTOSConfig.h` switch, needs its own `#if`, or
+  the library stops compiling in a project that switched it off. Test that with
+  a build whose stub headers leave those calls out.
+- **C++ code includes it too**, so the code has to be valid C++ as well: cast a
+  `void *` explicitly, and use no designated initializers.
+- **A function that is never called costs nothing.** GCC and Clang do not warn
+  about an unused `static inline` function in a header, and do not emit it.
+
 ### Include guards
 
 Use `#ifndef`/`#define`/`#endif` guards (more portable than `#pragma once`). Name the macro from the project and file path, uppercased: `PROJECT_MODULE_H`.
@@ -548,9 +573,28 @@ Conventions for the block:
 
 **Where the documentation lives.** Put the *full* contract - `@brief`, every `@param`, the `@return` - at the function's **definition in the `.c`**, under its banner. The definition is where the code is edited, so keeping the contract next to the implementation keeps the two from drifting apart. The **declaration** carries only a one-line `@brief` so a reader scanning the interface gets oriented without duplicating the whole contract:
 - **Public functions** - brief `@brief` on the prototype in the header; full block on the definition in the `.c`.
-- **Static (file-local) functions** - brief `@brief` on the private prototype; full block on the definition in the `.c`.
+- **Static (file-local) functions** - **nothing** on the private prototype, no comment and no separator; full block on the definition in the `.c`.
 
-The rule reduces to one principle: **brief at the declaration, full contract at the definition.** Since every definition lives in the `.c`, this means the `.c` carries the longer comments and the `.h` the shorter ones. A **standalone program** (a lone `.c` with no header) has no separate declaration, so its full blocks simply live on the definitions.
+The header is the interface a reader scans without opening the `.c`, so its prototypes earn a one-line brief. A private prototype sits in the same file as its definition, which already carries the brief and the full contract, so a comment on it only says the same thing twice. The `Private function prototypes` section is therefore a plain list, aligned on the function names like any group of declarations, with any `#if` guards kept around the lines they belong to:
+
+```c
+/*
+ * ****************************************************************************************************
+ * Private function prototypes
+ * ****************************************************************************************************
+*/
+
+static uint32_t      ee24_size_bytes(uint16_t size_kbit);
+static ee24_err_t    ee24_check(const ee24_t *handle, uint32_t address, const void *data,
+                                size_t len);
+static ee24_target_t ee24_target(const ee24_t *handle, uint32_t address);
+static void          ee24_sleep(void);
+#if EE24_RTOS != EE24_RTOS_NONE
+static bool          ee24_kernel_running(void);
+#endif
+```
+
+The rule reduces to one principle: **the full contract lives at the definition, and a one-line brief only on the header prototype.** Since every definition lives in the `.c`, this means the `.c` carries the longer comments and the `.h` the shorter ones. A **standalone program** (a lone `.c` with no header) has no separate declaration, so its full blocks simply live on the definitions.
 
 Be consistent within a project. If a team prefers the full docs in the `.c` instead, that's a valid choice - just apply it everywhere rather than mixing.
 
@@ -592,7 +636,7 @@ example_status_t example_push(example_t *stack, int value);
 
 Rules:
 - **One width throughout the file**, just over 100 columns (103 in the reference files), shared by every marker: the boxed section banner's rows and every single-line separator (before types, prototypes, and definitions). They read as one consistent divider; the boxed section banner stands apart by opening with `/*`, spanning multiple lines, and carrying a label.
-- A separator precedes **every** item, the first one in a section included - the section banner announces the group, the separators divide the items within it (so a section banner is followed by a blank line, then the first item's separator).
+- A separator precedes **every** item, the first one in a section included - the section banner announces the group, the separators divide the items within it (so a section banner is followed by a blank line, then the first item's separator). The one exception is a `.c` file's `Private function prototypes`, a plain list with no separators, as described under [Where the documentation lives](#doxygen-for-functions-and-files).
 - Both implementation sections (`Public function implementations`, `Private function implementations`) open with the boxed section banner; each definition inside then gets its own separator.
 - One blank line sits between the end of one item and the next item's separator.
 
