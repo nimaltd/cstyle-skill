@@ -531,6 +531,22 @@ if (stack->count == stack->capacity)
 
 This is the same "explain why, not what" rule applied step by step: a handful of well-placed lines beat a comment on every statement, which just adds noise and hides the ones that matter.
 
+**The reasoning behind a step goes at the step, not in the block above the function.** The Doxygen block is short: the `@brief`, one line per `@param`, and the `@return`. A warning the caller must not miss fits in the brief itself ("Not from an interrupt."). How it works inside, why pages are written one at a time or why the mutex is created last, belongs on the line that does it. Written in the block instead, the explanation is far from the code it explains, it drifts when the code changes, and the body is left bare, so someone reading the function has nothing to follow. ee24 was written that way first and had to be reworked, twice: paragraphs above each function and almost nothing inside, then paragraphs still left over after the first pass. What the user of the library needs beyond that goes in the README.
+
+```c
+/*****************************************************************************************************/
+/**
+ * @brief Write len bytes starting at address. Not from an interrupt.
+ *
+ * @param[in,out] handle      Handle from ee24_init().
+ * @param[in]     address     First byte to write.
+ * @param[in]     data        The bytes to write.
+ * @param[in]     len         Bytes to write, up to the end of the chip.
+ * @param[in]     timeout_ms  Time for the whole call. HAL_MAX_DELAY waits for ever.
+ * @return EE24_ERR_NONE, or the EE24_ERR_ value that says what went wrong.
+ */
+```
+
 ### Doxygen for functions and files
 
 Every file - `.c` and `.h` alike - opens with a header block carrying the file's `@brief` and a copyright/license notice. A `@version` line is optional; include it when the project tracks file or module versions:
@@ -555,18 +571,18 @@ Every public function (and every static function whose purpose isn't obvious) ge
 /**
  * @brief Compute the area of a shape.
  *
- * Dispatches on the shape's kind. Returns a negative value for an
- * unrecognized kind so callers can distinguish error from a zero-area shape.
- *
  * @param[in] shape  The shape to measure. Must not be NULL.
- * @return The area in square units, or a negative value on error.
+ * @return The area in square units, or a negative value for an unknown kind.
  */
 double shape_area(const shape_t *shape)
 ```
 
 Conventions for the block:
 - `@brief` is a single line, imperative or noun phrase, ending with a period.
-- Leave a blank comment line between `@brief` and a longer description.
+- Leave a blank comment line after the `@brief`. No description paragraph as a
+  rule: a warning fits in the brief, the reasoning goes at the step inside the
+  function (see [Inline comments inside functions](#inline-comments-inside-functions)),
+  and what a user needs beyond that goes in the README.
 - One `@param` per parameter, in order. **Every `@param` carries a direction specifier** - `@param[in]` for inputs (including by-value params and `const` pointers), `@param[out]` for pure outputs, `@param[in,out]` for parameters that are both read and modified. Align the param names within a block when there's more than one.
 - `@return` describes the value *and its error sentinels*. Omit it only for `void` functions.
 - Use `@note`, `@warning`, `@see` sparingly when they add real information.
