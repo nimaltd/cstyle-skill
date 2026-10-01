@@ -71,15 +71,19 @@ Every section listed gets the boxed section banner, **including both implementat
 ### A header-only library
 
 When the whole library is one header of `static inline` functions, the header
-is its own `.c` as well, and takes both orders in one file: the header's items
-1 to 7, then
+is its own `.c` as well, and takes the `.c` file's shape after the header's
+items 1 to 7:
 
-1. Public function prototypes, each with its separator and one-line `@brief`,
-   since this list is still the interface a reader scans
-2. Private function prototypes, a plain list as in a `.c`
-3. Public function implementations, with the full contract
-4. Private function implementations
-5. C++ linkage guard close, include guard close
+1. Private function prototypes, a plain list as in a `.c`, and only for a
+   helper that is called before its definition
+2. Public function implementations, with the short Doxygen block
+3. Private function implementations
+4. C++ linkage guard close, include guard close
+
+**No public prototypes.** Every definition is in the same file, before any
+code that includes the header can call it, so a prototype is not needed, and
+a commented one only says again what the definition above the function
+already says. The README's API table is the overview a user reads.
 
 Three things change once every function body lives in a header:
 
