@@ -97,6 +97,23 @@ Three things change once every function body lives in a header:
 - **A function that is never called costs nothing.** GCC and Clang do not warn
   about an unused `static inline` function in a header, and do not emit it.
 
+**One port header per platform**, when a setting picks between whole
+implementations (osal does this for each RTOS). Each port holds the complete
+code for one platform with no `#if` inside it, and the main header only checks
+the setting and includes the one port that matches:
+
+- The main header keeps what every port shares: the includes, the
+  configuration checks, the common types and any shared helper. A helper only
+  some ports call needs no `#if`, for the reason just above.
+- It includes the port **last**, after its own `extern "C"` block has closed,
+  since the port uses the types above it. The port opens its own `extern "C"`
+  and includes its vendor header outside it.
+- Every port starts with a check, so including it on its own, or a port the
+  setting does not name, fails with a message instead of a wall of type errors:
+  `#if !defined(OSAL_H) || (OSAL_RTOS != OSAL_RTOS_THREADX)` then `#error`.
+  `-Wundef` stays quiet: GCC does not evaluate the right side of a true `||`.
+- The tests build once per setting, so every port is compiled and tested.
+
 ### Include guards
 
 Use `#ifndef`/`#define`/`#endif` guards (more portable than `#pragma once`). Name the macro from the project and file path, uppercased: `PROJECT_MODULE_H`.
