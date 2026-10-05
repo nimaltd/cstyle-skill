@@ -817,7 +817,7 @@ example_status_t example_push(example_t *stack, int value)
 }
 ```
 
-Three rules keep that readable rather than a staircase:
+Four rules keep that readable rather than a staircase:
 
 1. **Initialise the result to the failure value.** Then the validation arm needs
    no `else`, and a path you forgot to write fails safe instead of returning
@@ -829,6 +829,57 @@ Three rules keep that readable rather than a staircase:
    acquire several resources - MISRA Rule 15.1 permits `goto`, provided it only
    ever jumps *forward* to a label later in the same function, which the cleanup
    idiom does. It gives you one exit and one cleanup path at the same time.
+4. **A function that checks, then acts, is one `do { } while (false)` pass.**
+   Each check that fails sets the result and `break`s to the single `return`, so
+   the work after the last check sits flat instead of inside every check. The
+   NimaLTD libraries use this for their public functions.
+
+```c
+example_status_t example_send(example_t *dev, const uint8_t *data, size_t len)
+{
+    example_status_t status = EXAMPLE_NOT_READY;
+
+    assert_param(dev != NULL);
+    assert_param(data != NULL);
+
+    /* Runs once. A check that fails breaks out to the one return at the end. */
+    do
+    {
+        if (dev->ready == 0U)
+        {
+            break;
+        }
+
+        if (example_lock(dev) != EXAMPLE_OK)
+        {
+            status = EXAMPLE_BUSY;
+            break;
+        }
+
+        /* No break from here on: the lock is held, and is given back below. */
+        status = example_transfer(dev, data, len);
+        example_unlock(dev);
+    }
+    while (false);
+
+    return status;
+}
+```
+
+   - **Pointer arguments are checked by `assert_param` only** (`assert` outside
+     the HAL), never tested again in the block. A `NULL` is a bug in the
+     caller: a debug build with Enable Full Assert stops at the line, and the
+     README says so. The block checks what a correct caller can still meet,
+     such as a handle whose init failed, and returns an error for that.
+   - `while (false)`, never `while (0)`. Rule 14.4 wants an essentially Boolean
+     condition, and Rule 14.3 permits a `do ... while` whose condition is false.
+   - Several `break`s in one loop deviate from Rule 15.4 (Advisory). This guide
+     records that deviation once, here, for this shape only.
+   - **No `break` once something is held**, a mutex taken or a pin driven. From
+     that point the work runs to the end of the block, with the release last
+     inside it, and a comment says so.
+   - A `break` inside an inner `while`, `for` or `switch` leaves only that one,
+     so a check that must leave the whole block never sits inside one.
 
 `void` functions get the same treatment: wrap the body rather than `return;`
 early. A bare `return;` at the end of a `void` function is redundant - leave it
