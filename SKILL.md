@@ -323,6 +323,85 @@ The configuration file still says each option's valid range beside its
 `#define`, for the person editing it. That comment is the documentation; the
 check in the header is what enforces it.
 
+### A driver for a bus peripheral: one shape for every library
+
+Every library that moves data over SPI, I2C, a UART or any other bus takes the
+same shape, so an application drives all of them the same way from one state
+machine or from seq, and a reader who knows one knows them all. spif and ee24
+are the models to copy.
+
+**Two modes, one setting.** `<LIB>_TRANSFER` in the configuration file, with
+`<LIB>_TRANSFER_POLLING` as 1 and `<LIB>_TRANSFER_DMA` as 2 (named choices
+start at 1, above). Only the code for the chosen mode is compiled in.
+
+**Every call that can take long is a job, in both modes.** The call checks its
+arguments, takes the mutex, does the first step and returns at once with
+`<LIB>_ERR_NONE` ("started"), or with the error that stopped it. Nothing that
+moves data or waits for the chip blocks for longer than one step:
+
+- A write sends one page, then the chip stores it by itself.
+- An erase sends its command, then the chip erases by itself, for milliseconds
+  or minutes.
+- A read by DMA starts the DMA. A read by polling moves one piece of at most
+  `<LIB>_POLL_CHUNK` bytes, so the CPU moving every byte never keeps the
+  caller longer than one piece takes. A read that fits in one piece is done
+  when the call returns.
+
+The chip's own time is the long part, and DMA does not shorten it: 1 KB to a
+24C256 is about 26 ms on the bus and 150 ms of page stores, and a 16 MB flash
+erase is up to 200 s. So the job model holds without DMA too. Only `init` and
+calls of a few bytes, a unique ID, may block.
+
+**Two calls follow a job, with the same names everywhere:**
+
+- `bool <lib>_is_busy(<lib>_t *handle)` moves the job one step and returns at
+  once: it reads the next piece by polling, or asks the chip or the HAL once
+  whether the piece under way is done and starts the next. It never sleeps.
+  `true` while the job runs.
+- `<lib>_err_t <lib>_wait(<lib>_t *handle)` loops on `is_busy()` and returns
+  the job's result. It sleeps `osal_delay_ms(1)` between questions while the
+  chip or the DMA has the job, and none between the pieces of a read by
+  polling, which would only slow it down.
+
+A call refused at once stores its result too, so `start; wait` is all simple
+code needs. Any other call on the handle during a job returns
+`<LIB>_ERR_BUSY` with no traffic. The mutex is held from the call that starts
+a job until it ends, so `is_busy()` and `wait()` come from the thread that
+started it. The handle carries the job: `job_state`, `job_result`,
+`job_data`, `job_len`, `job_done`, `job_address`, `job_step`, `job_start`,
+`job_timeout`, and whatever else the device needs.
+
+**What only DMA needs is under `#if (<LIB>_TRANSFER == <LIB>_TRANSFER_DMA)`**:
+the helpers that start and follow a DMA transfer, the job states that exist
+only with DMA (a page on its way out), and any check that can only be true with
+DMA. What only polling needs, the piece reader, sits in the `#else`. A field or
+helper both modes use stays unguarded. The polling object must reference no
+DMA function of the HAL at all; check it with `nm -u`.
+
+**Times live in the configuration file, never in an argument.** No function
+takes a `timeout_ms`. There is one setting per step: the mutex
+(`<LIB>_TIMEOUT_MUTEX_MS`, `HAL_MAX_DELAY` as shipped), the bus transfer
+(scaled by size when a transfer can be long, as ee24 gives every 256 bytes a
+share), and each of the chip's own times, each the datasheet's longest plus
+half again. `HAL_MAX_DELAY` waits for ever and is never multiplied, so it
+cannot wrap round to a short time.
+
+**A stuck DMA transfer** ends the job with `<LIB>_ERR_TIMEOUT` and leaves the
+peripheral usable again: `HAL_SPI_Abort()` for SPI. The HAL cannot abort an
+I2C memory transfer, so I2C is set up again with `HAL_I2C_DeInit()` and
+`HAL_I2C_Init()`, which runs CubeMX's MspInit and its DMA setup.
+
+**A setting added after a library's first version gets a default** in the
+header, as above, so the configuration file a user already has, whose `USER
+CODE` part the installer keeps, still builds after an update.
+
+**The tests build once per mode**, plus once with every time `HAL_MAX_DELAY`,
+and once more for any setting that changes which code runs, such as a piece
+size big enough to show a time scaled by size. The fake HAL ends a DMA
+transfer once the test clock passes its end, a `tearDown()` checks that no
+chip is left selected, no DMA left running and no mutex left held, and a test
+follows a job by hand with `is_busy()` as well as with `wait()`.
+
 ## Naming
 
 | Kind | Convention | Example |
@@ -880,6 +959,14 @@ example_status_t example_send(example_t *dev, const uint8_t *data, size_t len)
      inside it, and a comment says so.
    - A `break` inside an inner `while`, `for` or `switch` leaves only that one,
      so a check that must leave the whole block never sits inside one.
+   - **Take the mutex with `osal_mutex_lock()` right there in the block**, and
+     map its answer to the library's errors in the two checks that follow it
+     (`OSAL_ERR_TIMEOUT` to `_ERR_TIMEOUT`, anything else but `OSAL_ERR_NONE`
+     to `_ERR_MUTEX`), each with its own `break`. Never wrap the lock in a
+     helper such as `ee_lock()`: he asked for that to be undone in ee 5.0.0.
+     The lock is the line that starts the held section, and a reader has to
+     see it, its two exits, and the unlock at the bottom in one function.
+     ee24's `ee24_read()` is the shape to copy.
 
 `void` functions get the same treatment: wrap the body rather than `return;`
 early. A bare `return;` at the end of a `void` function is redundant - leave it
