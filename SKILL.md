@@ -354,19 +354,27 @@ calls of a few bytes, a unique ID, may block.
 
 **Two calls follow a job, with the same names everywhere:**
 
-- `bool <lib>_is_busy(<lib>_t *handle)` moves the job one step and returns at
-  once: it reads the next piece by polling, or asks the chip or the HAL once
-  whether the piece under way is done and starts the next. It never sleeps.
-  `true` while the job runs.
-- `<lib>_err_t <lib>_wait(<lib>_t *handle)` loops on `is_busy()` and returns
-  the job's result. It sleeps `osal_delay_ms(1)` between questions while the
-  chip or the DMA has the job, and none between the pieces of a read by
-  polling, which would only slow it down.
+- `bool <lib>_is_running(<lib>_t *handle)` moves the job one step and
+  returns at once: it reads the next piece by polling, or asks the chip or the
+  HAL once whether the piece under way is done and starts the next. It never
+  sleeps. `true` while the job runs.
+- `<lib>_err_t <lib>_wait(<lib>_t *handle)` loops on `is_running()` and
+  returns the job's result. It sleeps `osal_delay_ms(1)` between questions
+  while the chip or the DMA has the job, and none between the pieces of a read
+  by polling, which would only slow it down.
+
+**The name is `is_running()`.** The read, write or erase call puts the first
+transfer on the bus itself; `is_running()` checks on the job and moves it on.
+Not `is_busy()`, which reads as the chip's own busy bit or as
+`<LIB>_ERR_BUSY`; not `step()`, which reads as if the job only starts there;
+not `poll()`, which reads as the polling transfer mode. A job moves only when
+`is_running()` or `wait()` asks, so the README says so with a number: a state
+machine that comes back every 10 ms sends one page every 10 ms.
 
 A call refused at once stores its result too, so `start; wait` is all simple
 code needs. Any other call on the handle during a job returns
 `<LIB>_ERR_BUSY` with no traffic. The mutex is held from the call that starts
-a job until it ends, so `is_busy()` and `wait()` come from the thread that
+a job until it ends, so `is_running()` and `wait()` come from the thread that
 started it. The handle carries the job: `job_state`, `job_result`,
 `job_data`, `job_len`, `job_done`, `job_address`, `job_step`, `job_start`,
 `job_timeout`, and whatever else the device needs.
@@ -400,7 +408,7 @@ and once more for any setting that changes which code runs, such as a piece
 size big enough to show a time scaled by size. The fake HAL ends a DMA
 transfer once the test clock passes its end, a `tearDown()` checks that no
 chip is left selected, no DMA left running and no mutex left held, and a test
-follows a job by hand with `is_busy()` as well as with `wait()`.
+follows a job by hand with `is_running()` as well as with `wait()`.
 
 ## Naming
 
