@@ -334,10 +334,12 @@ are the models to copy.
 `<LIB>_TRANSFER_POLLING` as 1 and `<LIB>_TRANSFER_DMA` as 2 (named choices
 start at 1, above). Only the code for the chosen mode is compiled in.
 
-**Every call that can take long is a job, in both modes.** The call checks its
-arguments, takes the mutex, does the first step and returns at once with
-`<LIB>_ERR_NONE` ("started"), or with the error that stopped it. Nothing that
-moves data or waits for the chip blocks for longer than one step:
+**Every call that can take long comes two ways: `<lib>_read()` returns once
+done, and `<lib>_read_nb()` starts it as a job and returns at once.** The same
+for `write` and every erase. The `_nb` call does the real work, in both modes:
+it checks its arguments, takes the mutex, does the first step and returns
+with `<LIB>_ERR_NONE` ("started"), or with the error that stopped it. Nothing
+that moves data or waits for the chip blocks for longer than one step:
 
 - A write sends one page, then the chip stores it by itself.
 - An erase sends its command, then the chip erases by itself, for milliseconds
@@ -350,7 +352,20 @@ moves data or waits for the chip blocks for longer than one step:
 The chip's own time is the long part, and DMA does not shorten it: 1 KB to a
 24C256 is about 26 ms on the bus and 150 ms of page stores, and a 16 MB flash
 erase is up to 200 s. So the job model holds without DMA too. Only `init` and
-calls of a few bytes, a unique ID, may block.
+calls of a few bytes, a unique ID, block with no `_nb` form.
+
+The plain name is the call that waits, because it is what simple code wants
+and what the HAL and every older version did: `HAL_I2C_Mem_Write()` waits too.
+It is one line, `return <lib>_wait_started(handle, <lib>_read_nb(...));`, and
+the private `<lib>_wait_started()` calls `<lib>_wait()` only when the `_nb`
+call returned `<LIB>_ERR_NONE`. A call refused with `<LIB>_ERR_BUSY` started
+nothing, and waiting would finish the job that was already running and report
+its result as this call's. Without that pair, `start; use the data` compiles,
+returns `<LIB>_ERR_NONE` and reads a buffer that is not filled yet, a bug with
+no symptom but wrong data. A port to another library, such as littlefs, calls
+the ones that wait, and its test fake has only those, so a port that used a
+`_nb` call would not link. In the header and the `.c` the calls that wait come
+first, then the `_nb` ones, then `process()` and `wait()`.
 
 **Two calls follow a job, with the same names everywhere:**
 
@@ -387,8 +402,8 @@ fake HAL moves the clock on a microsecond for each question, as a real CPU
 spends it, and a test that counts the sleeps: none without an RTOS, some with
 one.
 
-A call refused at once stores its result too, so `start; wait` is all simple
-code needs. Any other call on the handle during a job returns
+A `_nb` call refused at once stores its result too, so `start; wait` reports
+it. Any other call on the handle during a job returns
 `<LIB>_ERR_BUSY` with no traffic. The mutex is held from the call that starts
 a job until it ends, so `process()` and `wait()` come from the thread that
 started it. The handle carries the job: `job_state`, `job_result`,
@@ -424,7 +439,11 @@ and once more for any setting that changes which code runs, such as a piece
 size big enough to show a time scaled by size. The fake HAL ends a DMA
 transfer once the test clock passes its end, a `tearDown()` checks that no
 chip is left selected, no DMA left running and no mutex left held, and a test
-follows a job by hand with `process()` as well as with `wait()`.
+follows a job by hand with `process()` as well as with `wait()`. The helpers
+the tests read and write through use the calls that wait, as a user would, and
+three tests pin those down: they return with the job ended and the mutex free,
+a refused one leaves a running `_nb` job alone, and one refused at once says
+why.
 
 ## Naming
 
