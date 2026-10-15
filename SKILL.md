@@ -97,6 +97,18 @@ Three things change once every function body lives in a header:
 - **A function that is never called costs nothing.** GCC and Clang do not warn
   about an unused `static inline` function in a header, and do not emit it.
 
+With no public prototypes, **a public function another one calls comes first**,
+and in every port in the same order, even where only one port needs it. osal's
+heap comes before its tasks, because ThreadX's `osal_task_create()` takes its
+stack from `osal_malloc()`. A forward prototype for a public function would be
+the one prototype in the file that says nothing new.
+
+**Zero a vendor struct rather than name a member that only some settings have.**
+ST's CMSIS-RTOS v1 `osThreadDef_t` has its `buffer` and `controlblock` members
+only with `configSUPPORT_STATIC_ALLOCATION 1`, and both must be `NULL` to take
+memory from the heap. `memset(&def, 0, sizeof(def))` and then the members every
+build has needs no `#if`, and compiles under either setting.
+
 **One port header per platform**, when a setting picks between whole
 implementations (osal does this for each RTOS). Each port holds the complete
 code for one platform with no `#if` inside it, and the main header only checks
