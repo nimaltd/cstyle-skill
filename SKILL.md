@@ -353,17 +353,24 @@ allows (one read command for a whole spif read, 32 KB at a time on ee24) and
 gives the mutex back. A write sends a page and waits for the chip, page after
 page. The waits are two small private loops, `<lib>_until_stored()` or
 `<lib>_until_done()` for the chip and `<lib>_until_moved()` for the DMA. Each
-calls `<lib>_yield()` and then asks once, until the answer is no longer busy.
-`<lib>_yield()` sleeps `osal_delay_ms(1)` with an RTOS and does nothing
-without one. The question itself is a private function both modes share
-(`<lib>_stored()`, `<lib>_done()`, `<lib>_moved()`), so a job and a loop ask
-the chip the same way.
+calls `osal_pause()` and then asks once, until the answer is no longer busy.
+`osal_pause()` sleeps one tick with an RTOS, so threads of every priority run,
+and does nothing without one; a library never writes its own, and never polls
+with `osal_delay_ms()`, which would sleep bare metal too. Between the pieces
+of a read by polling, where the CPU itself is busy, it calls `osal_yield()`,
+osal's first function: the RTOS's own yield, which gives the threads of the
+same priority a turn at a cost of microseconds, where a pause would add half a
+tick to every piece. Never yield to wait on hardware: a high priority thread
+yielding through a minute long erase starves every thread below it. The
+question itself is a private function both modes share (`<lib>_stored()`,
+`<lib>_done()`, `<lib>_moved()`), so a job and a loop ask the chip the same
+way.
 
 **What both modes share is written once:** `<lib>_check()` (handle, then busy
 in non-blocking, then range), `<lib>_lock()` (the mutex and its two errors),
-sending one page, asking the chip once, `<lib>_yield()`, and on spif the
-erase plan, `spif_plan()`, which turns a sector, block or chip erase into the
-erases this chip needs. Everything else is under the mode's `#if`.
+sending one page, asking the chip once, and on spif the erase plan,
+`spif_plan()`, which turns a sector, block or chip erase into the erases this
+chip needs. Everything else is under the mode's `#if`.
 
 **Non-blocking, every call that can take long is a job.** The `_nb` call
 checks its arguments, takes the mutex, does the first step and returns with
