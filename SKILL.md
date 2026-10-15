@@ -330,16 +330,45 @@ same shape, so an application drives all of them the same way from one state
 machine or from seq, and a reader who knows one knows them all. spif and ee24
 are the models to copy.
 
-**Two modes, one setting.** `<LIB>_TRANSFER` in the configuration file, with
-`<LIB>_TRANSFER_POLLING` as 1 and `<LIB>_TRANSFER_DMA` as 2 (named choices
-start at 1, above). Only the code for the chosen mode is compiled in.
+**Two settings, first in the configuration file, in this order:**
 
-**Every call that can take long comes two ways: `<lib>_read()` returns once
-done, and `<lib>_read_nb()` starts it as a job and returns at once.** The same
-for `write` and every erase. The `_nb` call does the real work, in both modes:
-it checks its arguments, takes the mutex, does the first step and returns
-with `<LIB>_ERR_NONE` ("started"), or with the error that stopped it. Nothing
-that moves data or waits for the chip blocks for longer than one step:
+1. `<LIB>_MODE`: `<LIB>_MODE_BLOCKING` (1, the default and what ships) or
+   `<LIB>_MODE_NON_BLOCKING` (2). Blocking, the plain calls, `<lib>_read()`,
+   `<lib>_write()` and every erase, return once done. Non-blocking, each also
+   has a `_nb` form that starts it as a job and returns at once, and
+   `<lib>_process()` and `<lib>_wait()` exist.
+2. `<LIB>_TRANSFER`: `<LIB>_TRANSFER_POLLING` (1) or `<LIB>_TRANSFER_DMA`
+   (2). Either mode works with either transfer.
+
+Named choices start at 1, above. `<LIB>_MODE` is defaulted in the header to
+blocking, so a configuration file from before it still builds. Only the code
+for the chosen settings is compiled in, and **the handle's job fields are
+inside `#if (<LIB>_MODE == <LIB>_MODE_NON_BLOCKING)`**, so a blocking handle
+carries none: ee24's `ee24_t` is 24 bytes blocking and 48 non-blocking, spif's
+32 and 64, where one shape for both was 60 and 68.
+
+**Blocking is a straight loop, not a job and a wait.** `<lib>_read()` checks
+its arguments, takes the mutex, moves the data in as few transfers as the chip
+allows (one read command for a whole spif read, 32 KB at a time on ee24) and
+gives the mutex back. A write sends a page and waits for the chip, page after
+page. The waits are two small private loops, `<lib>_until_stored()` or
+`<lib>_until_done()` for the chip and `<lib>_until_moved()` for the DMA. Each
+calls `<lib>_yield()` and then asks once, until the answer is no longer busy.
+`<lib>_yield()` sleeps `osal_delay_ms(1)` with an RTOS and does nothing
+without one. The question itself is a private function both modes share
+(`<lib>_stored()`, `<lib>_done()`, `<lib>_moved()`), so a job and a loop ask
+the chip the same way.
+
+**What both modes share is written once:** `<lib>_check()` (handle, then busy
+in non-blocking, then range), `<lib>_lock()` (the mutex and its two errors),
+sending one page, asking the chip once, `<lib>_yield()`, and on spif the
+erase plan, `spif_plan()`, which turns a sector, block or chip erase into the
+erases this chip needs. Everything else is under the mode's `#if`.
+
+**Non-blocking, every call that can take long is a job.** The `_nb` call
+checks its arguments, takes the mutex, does the first step and returns with
+`<LIB>_ERR_NONE` ("started"), or with the error that stopped it. Nothing that
+moves data or waits for the chip blocks for longer than one step:
 
 - A write sends one page, then the chip stores it by itself.
 - An erase sends its command, then the chip erases by itself, for milliseconds
@@ -356,7 +385,9 @@ calls of a few bytes, a unique ID, block with no `_nb` form.
 
 The plain name is the call that waits, because it is what simple code wants
 and what the HAL and every older version did: `HAL_I2C_Mem_Write()` waits too.
-It is one line, `return <lib>_wait_started(handle, <lib>_read_nb(...));`, and
+It exists in both modes, so a port or simple code builds either way.
+Non-blocking it is one line, `return <lib>_wait_started(handle,
+<lib>_read_nb(...));`, and
 the private `<lib>_wait_started()` calls `<lib>_wait()` only when the `_nb`
 call returned `<LIB>_ERR_NONE`. A call refused with `<LIB>_ERR_BUSY` started
 nothing, and waiting would finish the job that was already running and report
@@ -434,16 +465,20 @@ I2C memory transfer, so I2C is set up again with `HAL_I2C_DeInit()` and
 header, as above, so the configuration file a user already has, whose `USER
 CODE` part the installer keeps, still builds after an update.
 
-**The tests build once per mode**, plus once with every time `HAL_MAX_DELAY`,
-and once more for any setting that changes which code runs, such as a piece
-size big enough to show a time scaled by size. The fake HAL ends a DMA
-transfer once the test clock passes its end, a `tearDown()` checks that no
-chip is left selected, no DMA left running and no mutex left held, and a test
-follows a job by hand with `process()` as well as with `wait()`. The helpers
-the tests read and write through use the calls that wait, as a user would, and
-three tests pin those down: they return with the job ended and the mutex free,
-a refused one leaves a running `_nb` job alone, and one refused at once says
-why.
+**The tests build once for each `<LIB>_MODE` and `<LIB>_TRANSFER`, with an
+RTOS and without one**, plus once with every time `HAL_MAX_DELAY`, and once
+more for any setting that changes which code runs, such as a piece size big
+enough to show a time scaled by size. The fake HAL ends a DMA transfer once
+the test clock passes its end, a `tearDown()` checks that no chip is left
+selected, no DMA left running and no mutex left held, and a test follows a job
+by hand with `process()` as well as with `wait()`. The helpers the tests read
+and write through use the calls that wait, as a user would, and three tests
+pin those down: they return with the job ended and the mutex free, a refused
+one leaves a running `_nb` job alone, and one refused at once says why. A test
+of what only a job does sits in `#if USES_JOBS`, and a `job_running()` helper
+that answers false without jobs lets the rest run in every build. One CMake
+function, `<lib>_suite(name settings...)`, makes each build from its `-D`
+settings.
 
 ## Naming
 
